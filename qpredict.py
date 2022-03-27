@@ -14,7 +14,9 @@ model_name = str(sys.argv[1])
 model = DQN.load(model_name)
 obs = env.reset()
 while True:
-    action, _states = model.predict(obs)
-    obs, rewards, dones, info = env.step(action)
-    if dones:
-        env.reset()
+    action, _states = model.predict(obs, deterministic=True)
+    obs, reward, done, info = env.step(action)
+    print(str(reward))
+    env.render()
+    if done:
+      obs = env.reset()

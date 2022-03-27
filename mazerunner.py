@@ -218,11 +218,12 @@ class MazeEnv(gym.Env ):
 
         self.action_space = spaces.Discrete(8)
 # Example for using image as input:
-        self.observation_space = spaces.Box(low=0, high=max(SCREEN_WIDTH, SCREEN_HEIGHT), shape=(5,))
+        self.observation_space = spaces.Box(low=0, high=max(SCREEN_WIDTH, SCREEN_HEIGHT), shape=(7,))
         pygame.init()
         self.nice_render = nice_render
         self.maxTime = time_limit
         self.farthestInRoom = SCREEN_WIDTH * 3
+        self.prev_reward = 0.0
 
 # Create an 800x600 sized screen
         self.screen = pygame.display.set_mode([SCREEN_WIDTH, SCREEN_HEIGHT])
@@ -243,7 +244,11 @@ class MazeEnv(gym.Env ):
         self.rooms.append(room)
 
     def reward(self):
-        return (800.0 - math.sqrt((self.player.rect.x - SCREEN_WIDTH)**2 + (self.player.rect.y - SCREEN_HEIGHT/2)**2)) / 800.0
+        return ((1+ self.current_room_no) * 1.0) +  -0.8 * math.sqrt((self.player.rect.x - SCREEN_WIDTH)**2 + (self.player.rect.y - SCREEN_HEIGHT/2)**2) / SCREEN_WIDTH
+
+    def distToGoal(self):
+        return math.sqrt((self.player.rect.x - SCREEN_WIDTH)**2 + (self.player.rect.y - SCREEN_HEIGHT/2)**2)
+
 
     def step(self, action):
         reward = 0.0
@@ -275,21 +280,26 @@ class MazeEnv(gym.Env ):
         self.player.move(self.current_room.wall_list)
 
         if self.player.rect.x < -15:
+            self.time_limit -= 500
             if self.current_room_no == 0:
                 self.current_room_no = 2
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
+                reward -= 100
 
             elif self.current_room_no == 2:
                 self.current_room_no = 1
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
+                reward -= 100
             else:
                 self.current_room_no = 0
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
+                reward -= 100
 
         if self.player.rect.x > 801:
+            self.time_limit += 500
             if self.current_room_no == 0:
                 self.current_room_no = 1
                 self.current_room = self.rooms[self.current_room_no]
@@ -306,13 +316,20 @@ class MazeEnv(gym.Env ):
                 self.player.rect.x = 50
                 reward += 100
         self.time_limit -= 1
-        if self.time_limit == 0:
+        if self.time_limit <= 0:
             done = True
         observation = self.player.checkDir(self.current_room.wall_list)
+        observation.append(self.player.rect.centerx)
+        observation.append(self.player.rect.centery)
         observation.append(self.current_room_no)
-        dense_reward = self.reward()
+        #dense_reward = self.reward()
         self.render()
-        reward += dense_reward
+
+        dense_reward = self.prev_reward - self.distToGoal()
+        self.prev_reward = self.distToGoal()
+        #reward += dense_reward
+        if dense_reward == 0.0:
+            reward -= 10
         return observation, reward, done, self.info
 
 
@@ -333,6 +350,8 @@ class MazeEnv(gym.Env ):
         self.clock = pygame.time.Clock()
 
         observation = self.player.checkDir(self.current_room.wall_list)
+        observation.append(self.player.rect.centerx)
+        observation.append(self.player.rect.centery)
         observation.append(self.current_room_no)
         return observation  # reward, done, info can't be included
 
@@ -344,7 +363,7 @@ class MazeEnv(gym.Env ):
             self.current_room.wall_list.draw(self.screen)
 
             pygame.display.flip()
-    #        self.clock.tick(60)
+            #self.clock.tick(1)
 
     def close (self):
         pygame.quit()
