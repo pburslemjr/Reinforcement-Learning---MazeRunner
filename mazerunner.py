@@ -2,6 +2,8 @@ import pygame
 import math
 import gym
 from gym import spaces
+import numpy as np
+import cv2
 
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
@@ -216,14 +218,19 @@ class MazeEnv(gym.Env ):
 # They must be gym.spaces objects
 # Example when using discrete actions:
 
-        self.action_space = spaces.Discrete(8)
+        self.action_space = spaces.Discrete(3)
 # Example for using image as input:
-        self.observation_space = spaces.Box(low=0, high=max(SCREEN_WIDTH, SCREEN_HEIGHT), shape=(7,))
+        self.observation_space = spaces.Box(low=0, high=255, shape=(240, 80, 1), dtype=np.uint8)
         pygame.init()
         self.nice_render = nice_render
         self.maxTime = time_limit
         self.farthestInRoom = SCREEN_WIDTH * 3
         self.prev_reward = 0.0
+        self.episode_reward = 0.0
+        self.current_dir = 2
+        self.history = []
+        for i in range(0, 6):
+            self.history.append(np.zeros((80, 80)))
 
 # Create an 800x600 sized screen
         self.screen = pygame.display.set_mode([SCREEN_WIDTH, SCREEN_HEIGHT])
@@ -257,23 +264,32 @@ class MazeEnv(gym.Env ):
         self.player.change_x = 0
         self.player.change_y = 0
         if action == 0:
-            self.player.change_y = -5
-        elif action == 1:
-            self.player.change_y = -5
-            self.player.change_x = 5
+            self.current_dir -= 1
         elif action == 2:
+            self.current_dir += 1
+        if self.current_dir == 8:
+            self.current_dir = 0
+        if self.current_dir < 0:
+            self.current_dir = 7
+
+        if self.current_dir == 0:
+            self.player.change_y = -5
+        elif self.current_dir == 1:
+            self.player.change_y = -5
             self.player.change_x = 5
-        elif action == 3:
+        elif self.current_dir == 2:
+            self.player.change_x = 5
+        elif self.current_dir == 3:
             self.player.change_y = 5
             self.player.change_x = 5
-        elif action == 4:
+        elif self.current_dir == 4:
             self.player.change_y = 5
-        elif action == 5:
+        elif self.current_dir == 5:
             self.player.change_y = 5
             self.player.change_x = -5
-        elif action == 6:
+        elif self.current_dir == 6:
             self.player.change_x = -5
-        elif action == 7:
+        elif self.current_dir == 7:
             self.player.change_y = -5
             self.player.change_x = -5
 
@@ -281,6 +297,7 @@ class MazeEnv(gym.Env ):
 
         if self.player.rect.x < -15:
             self.time_limit -= 500
+            print("Went back a room, -100 score")
             if self.current_room_no == 0:
                 self.current_room_no = 2
                 self.current_room = self.rooms[self.current_room_no]
@@ -300,6 +317,8 @@ class MazeEnv(gym.Env ):
 
         if self.player.rect.x > 801:
             self.time_limit += 500
+            self.prev_reward = self.distToGoal() + 1
+            print("Next room reached, +100 score")
             if self.current_room_no == 0:
                 self.current_room_no = 1
                 self.current_room = self.rooms[self.current_room_no]
@@ -318,21 +337,35 @@ class MazeEnv(gym.Env ):
         self.time_limit -= 1
         if self.time_limit <= 0:
             done = True
-        observation = self.player.checkDir(self.current_room.wall_list)
-        observation.append(self.player.rect.centerx)
-        observation.append(self.player.rect.centery)
-        observation.append(self.current_room_no)
         #dense_reward = self.reward()
         self.render()
+        #observation = pygame.surfarray.array3d(pygame.display.get_surface())
+        observation = self.pre_processing(pygame.surfarray.array3d(pygame.display.get_surface()))
 
         dense_reward = self.prev_reward - self.distToGoal()
         self.prev_reward = self.distToGoal()
         #reward += dense_reward
         if dense_reward == 0.0:
-            reward -= 10
+            reward -= 1
+        self.episode_reward += reward
         return observation, reward, done, self.info
 
 
+    def pre_processing(self, image):
+        image = cv2.cvtColor(cv2.resize(image, (80, 80)), cv2.COLOR_BGR2GRAY)
+        _, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
+        #image = image[ :, :, None].astype(np.float32)
+        #_, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
+        image = image / 255
+        del self.history[0]
+        self.history.append(image)
+        #print(type(image))
+        #print(image.shape)
+        image = np.concatenate((self.history[-5], self.history[-3], image), axis=0)
+        #print(image.shape)
+        image = np.expand_dims(image, axis=-1)
+        #print(image.shape)
+        return image
 
     def reset(self, time_limit=100):
 # Call this function so the Pygame library can initialize itself
@@ -342,6 +375,7 @@ class MazeEnv(gym.Env ):
         self.movingsprites = pygame.sprite.Group()
         self.movingsprites.add(self.player)
         self.time_limit = self.maxTime
+        self.episode_reward = 0.0
 
 
         self.current_room_no = 0
@@ -349,10 +383,8 @@ class MazeEnv(gym.Env ):
 
         self.clock = pygame.time.Clock()
 
-        observation = self.player.checkDir(self.current_room.wall_list)
-        observation.append(self.player.rect.centerx)
-        observation.append(self.player.rect.centery)
-        observation.append(self.current_room_no)
+        #observation = pygame.surfarray.array3d(pygame.display.get_surface())
+        observation = self.pre_processing(pygame.surfarray.array3d(pygame.display.get_surface()))
         return observation  # reward, done, info can't be included
 
     def render(self, mode='human'):
@@ -362,8 +394,11 @@ class MazeEnv(gym.Env ):
             self.movingsprites.draw(self.screen)
             self.current_room.wall_list.draw(self.screen)
 
+
+            #print("Episode Total Reward:                 ", end="\r", flush=True)
+            #print("Episode Total Reward: " + str(self.episode_reward), end="\r", flush=True)
             pygame.display.flip()
-            #self.clock.tick(1)
+            self.clock.tick(580)
 
     def close (self):
         pygame.quit()

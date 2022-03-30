@@ -4,16 +4,16 @@ from stable_baselines3 import DQN
 
 from mazerunner import MazeEnv
 
+import sys
 
-TIME_LIMIT = 2048
+TIME_LIMIT = 500
+name = input("Filename")
+nr = len(sys.argv) >= 2
 
-env = MazeEnv(nice_render = False, time_limit = TIME_LIMIT)
+env = MazeEnv(nice_render = nr, time_limit = TIME_LIMIT)
 
-model = DQN.load("DQN_maze_runner", env=env)
-print(str(model.exploration_final_eps))
-model.exploration_final_eps = 0.8
-print(str(model.exploration_final_eps))
-model.learn(total_timesteps=TIME_LIMIT*20000)
-model.save("DQN_maze_runner")
+model = DQN.load("DQN_maze_runner" + str(name), env=env)
+model.learn(total_timesteps=TIME_LIMIT*900)
+model.save("DQN_maze_runner" + str(name))
 
 
