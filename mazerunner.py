@@ -154,7 +154,7 @@ class Room1(Room):
                  [780, 350, 20, 250, WHITE],
                  [20, 0, 760, 20, WHITE],
                  [20, 580, 760, 20, WHITE],
-                 [390, 50, 20, 500, BLUE]
+                 [390, 50, 20, 500, WHITE]
                 ]
 
         # Loop through the list. Create the wall, add it to the list
@@ -212,7 +212,7 @@ class Room3(Room):
 
 
 class MazeEnv(gym.Env ):
-    def __init__(self, time_limit = 10000, nice_render = False):
+    def __init__(self, time_limit = 10000, framerate = -1, nice_render = False):
         super(MazeEnv, self).__init__()
 # Define action and observation space
 # They must be gym.spaces objects
@@ -229,6 +229,7 @@ class MazeEnv(gym.Env ):
         self.episode_reward = 0.0
         self.current_dir = 2
         self.history = []
+        self.framerate = framerate
         for i in range(0, 6):
             self.history.append(np.zeros((80, 80)))
 
@@ -255,6 +256,48 @@ class MazeEnv(gym.Env ):
 
     def distToGoal(self):
         return math.sqrt((self.player.rect.x - SCREEN_WIDTH)**2 + (self.player.rect.y - SCREEN_HEIGHT/2)**2)
+
+    def distToSide(self):
+        return math.sqrt((self.player.rect.x - SCREEN_WIDTH)**2)
+
+    def checkRects(self, x, y):
+        return True in (rec.rect.collidepoint(x, y) for rec in self.current_room.wall_list)
+
+    def seesGoal(self):
+        x0 = self.player.rect.centerx
+        y0 = self.player.rect.centery
+        x1 = SCREEN_WIDTH - 50
+        y1 = SCREEN_HEIGHT / 2
+
+        dx = abs(x1 - x0)
+        sx = -1
+        if x0 < x1:
+            sx = 1
+        dy = abs(y1 - y0)
+        sy = -1
+        if y0 < y1:
+            sy = 1
+        error = dx + dy
+
+        while True:
+            if self.checkRects(x0, y0):
+                return False
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * error
+            if e2 >= dy:
+                if x0 == x1:
+                    break
+                error = error + dy
+                x0 = x0 + sx
+            if e2 <= dx:
+                if y0 == y1:
+                    break
+                error = error + dx
+                y0 = y0 + sy
+        return True
+
+
 
 
     def step(self, action):
@@ -296,57 +339,61 @@ class MazeEnv(gym.Env ):
         self.player.move(self.current_room.wall_list)
 
         if self.player.rect.x < -15:
-            self.time_limit -= 500
             print("Went back a room, -100 score")
+            reward -= 100
             if self.current_room_no == 0:
                 self.current_room_no = 2
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
-                reward -= 100
 
             elif self.current_room_no == 2:
                 self.current_room_no = 1
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
-                reward -= 100
             else:
                 self.current_room_no = 0
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 790
-                reward -= 100
 
         if self.player.rect.x > 801:
-            self.time_limit += 500
             self.prev_reward = self.distToGoal() + 1
             print("Next room reached, +100 score")
+            reward += 100
             if self.current_room_no == 0:
                 self.current_room_no = 1
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 0
-                reward += 100
             elif self.current_room_no == 1:
                 self.current_room_no = 2
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 0
-                reward += 100
             else:
                 self.current_room_no = 0
                 self.current_room = self.rooms[self.current_room_no]
                 self.player.rect.x = 50
-                reward += 100
         self.time_limit -= 1
         if self.time_limit <= 0:
             done = True
         #dense_reward = self.reward()
-        self.render()
+
+        self.render(mode='minimap')
+
         #observation = pygame.surfarray.array3d(pygame.display.get_surface())
         observation = self.pre_processing(pygame.surfarray.array3d(pygame.display.get_surface()))
+        self.render(observation)
+
+
 
         dense_reward = self.prev_reward - self.distToGoal()
         self.prev_reward = self.distToGoal()
-        #reward += dense_reward
-        if dense_reward == 0.0:
+        if dense_reward > 0.0:
+            reward += 1
+        elif dense_reward <= 0.0:
             reward -= 1
+        #if dense_reward == 0.0:
+        #    reward -= 1
+        #reward -= (self.distToSide() / SCREEN_WIDTH)
+        reward = round(reward, 5)
         self.episode_reward += reward
         return observation, reward, done, self.info
 
@@ -367,7 +414,7 @@ class MazeEnv(gym.Env ):
         #print(image.shape)
         return image
 
-    def reset(self, time_limit=100):
+    def reset(self):
 # Call this function so the Pygame library can initialize itself
 
 # Create the player paddle object
@@ -375,6 +422,7 @@ class MazeEnv(gym.Env ):
         self.movingsprites = pygame.sprite.Group()
         self.movingsprites.add(self.player)
         self.time_limit = self.maxTime
+        print("Reward: " + str(round(self.episode_reward, 5)))
         self.episode_reward = 0.0
 
 
@@ -387,18 +435,28 @@ class MazeEnv(gym.Env ):
         observation = self.pre_processing(pygame.surfarray.array3d(pygame.display.get_surface()))
         return observation  # reward, done, info can't be included
 
-    def render(self, mode='human'):
+    def render(self, minimap=None, mode='human'):
         if self.nice_render:
             self.screen.fill(BLACK)
 
             self.movingsprites.draw(self.screen)
             self.current_room.wall_list.draw(self.screen)
+            pygame.display.set_caption('Maze Runner ' + str(round(self.episode_reward)))
 
 
             #print("Episode Total Reward:                 ", end="\r", flush=True)
             #print("Episode Total Reward: " + str(self.episode_reward), end="\r", flush=True)
-            pygame.display.flip()
-            self.clock.tick(580)
+            #pygame.draw.line(self.screen, WHITE, self.player.rect.center, [(self.player.rect.centerx + 5 * self.player.change_x),( self.player.rect.centery + 5*self.player.change_y)])
+            if not isinstance(minimap, type(None)):
+
+                surf = pygame.surfarray.make_surface(np.multiply(200, minimap.reshape(240, 80).astype(int)))
+                self.screen.blit(surf, (0,0))
+                del surf
+
+            if (mode == 'human'):
+                pygame.display.flip()
+                if self.framerate != -1:
+                    self.clock.tick(self.framerate)
 
     def close (self):
         pygame.quit()
